@@ -16,8 +16,8 @@ B.Tech CSE major project and research prototype. AegisMind models an enterprise-
 | 1+ | Synthetic scenario generator with ground-truth attack paths | ✅ Done |
 | 1+ | NetworkX baselines: hop-shortest and risk-weighted paths, blast radius, choke points, min-cut | ✅ Done |
 | 1+ | Minimal digital-twin what-if engine and path metrics (Top-k, MRR, edge F1) | ✅ Done |
-| 2 | CICIDS2017 / UNSW-NB15 loader and preprocessing with leakage controls | ⏳ Next |
-| 3 | Baseline detector (scikit-learn) with metrics and confusion matrix | ⏳ |
+| 2 | CICIDS2017 / UNSW-NB15 loaders and leakage-aware preprocessing | ✅ Done |
+| 3 | Baseline detector (scikit-learn) with metrics and confusion matrix | ⏳ Next |
 | 4 | Graph-context path scoring and MITRE ATT&CK evidence | ⏳ |
 | 5 | Defense optimizer, explainability layer and analyst feedback loop | ⏳ |
 | 6 | FastAPI and React dashboard | ⏳ |
@@ -63,6 +63,32 @@ Incident choke points (PC-16 -> DB-01):
 
 Each benchmark run saves a JSON record with the date, git commit, Python version, seeds, generator config and results, so every number in the paper can be traced back to a run.
 
+## Public datasets
+
+Download the datasets yourself (they're free, but too large to keep in git) and follow each dataset's terms of use:
+
+| Dataset | Put files in | Source |
+|---|---|---|
+| CICIDS2017 (MachineLearningCSV, 8 files) | `data/raw/cicids2017/` | https://www.unb.ca/cic/datasets/ids-2017.html |
+| UNSW-NB15 (training-set and testing-set CSVs) | `data/raw/unsw-nb15/` | https://research.unsw.edu.au/projects/unsw-nb15-dataset |
+
+```bash
+python -m aegismind.cli prepare cicids2017                 # day split (default)
+python -m aegismind.cli prepare cicids2017 --sample 0.3    # 8 GB RAM laptops
+python -m aegismind.cli prepare cicids2017 --split random  # optimistic comparison only
+python -m aegismind.cli prepare unsw-nb15                  # official train/test partition
+```
+
+`prepare` writes `train/val/test.csv.gz` and a `metadata.json` (row counts, dropped rows, features, scaler statistics, fingerprints) to `data/processed/<dataset>/`.
+
+**Leakage controls:**
+- Split first, then fit everything (scaler, constant-column removal, category vocabularies) on the training split only.
+- Split by capture day (CICIDS2017) or by the official partition (UNSW-NB15) instead of random rows.
+- Drop exact duplicate rows, plus val/test rows that are identical to a training row.
+- Remove `Infinity`/NaN rows and identifier columns (IPs, Flow ID, Timestamp), and count everything that was dropped.
+
+> **Note for the paper:** with the CICIDS2017 day split (train Mon–Wed, test Fri), PortScan and DDoS appear only in the test set. Binary detection on that split therefore measures generalization to *unseen* attack families. Report it as the main result and the random split as an in-distribution upper bound.
+
 ## Repository layout
 
 ```
@@ -72,10 +98,14 @@ aegismind/
     generator.py    # synthetic topologies, campaigns (ground truth), telemetry
     attack_kb.py    # MITRE ATT&CK technique labels for simulated steps
     whatif.py       # apply simulated actions to a copy of the twin, compare
+  data/
+    cicids.py       # CICIDS2017 loader (header, Infinity, label-encoding quirks)
+    unsw.py         # UNSW-NB15 loader (official partition, categoricals)
+    preprocess.py   # clean -> split -> fit-on-train -> save, with metadata
   graph/
     paths.py        # path baselines, blast radius, choke points, min-cut
     metrics.py      # Top-k hit, MRR, edge P/R/F1, next-hop accuracy
-  cli.py            # generate | analyze | benchmark
+  cli.py            # generate | analyze | prepare | benchmark
 configs/default.yaml
 docs/               # data dictionary, threat model
 tests/

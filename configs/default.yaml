@@ -16,3 +16,27 @@ generator:
   observation_noise: 0.15     # noise on exploitability values the defender sees
   background_events: [300, 800]
   window_hours: 24
+
+datasets:
+  cicids2017:
+    raw_dir: data/raw/cicids2017
+    out_dir: data/processed/cicids2017
+    split: day                    # day | random (random = optimistic comparison only)
+    day_split:
+      train: [Monday, Tuesday, Wednesday]
+      val: [Thursday]
+      test: [Friday]
+    drop_columns: []              # e.g. ["Destination Port"] for a port-agnostic ablation
+    sample_frac: null             # e.g. 0.2 on an 8 GB RAM laptop
+    scale: true
+    seed: 42
+  unsw-nb15:
+    raw_dir: data/raw/unsw-nb15
+    out_dir: data/processed/unsw-nb15
+    split: official               # official train/test files; val carved from train
+    val_frac: 0.15
+    categorical: [proto, service, state]
+    max_categories: 20
+    sample_frac: null
+    scale: true
+    seed: 42

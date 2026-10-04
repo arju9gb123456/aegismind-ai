@@ -90,6 +90,41 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         print(json.dumps(compare(t, Action("block_edge", src=u, dst=v), entry, target), indent=2))
 
 
+def cmd_prepare(args: argparse.Namespace) -> None:
+    from aegismind.data import preprocess
+    from aegismind.data.cicids import load_cicids2017
+    from aegismind.data.unsw import load_unsw_nb15
+
+    conf = yaml.safe_load(Path(args.config).read_text())["datasets"][args.dataset]
+    raw_dir = args.raw or conf["raw_dir"]
+    out_dir = args.out or conf["out_dir"]
+    sample = args.sample if args.sample is not None else conf.get("sample_frac")
+    seed = conf.get("seed", 42)
+    if args.dataset == "cicids2017":
+        df = load_cicids2017(raw_dir, sample_frac=sample, seed=seed)
+    else:
+        df = load_unsw_nb15(raw_dir, sample_frac=sample, seed=seed)
+    fields = preprocess.PrepConfig.__dataclass_fields__
+    cfg = preprocess.PrepConfig(dataset=args.dataset,
+                                **{k: v for k, v in conf.items() if k in fields})
+    if args.split:
+        cfg.split = args.split
+    data = preprocess.prepare(df, cfg)
+    data.metadata["sample_frac"] = sample
+    path = preprocess.save(data, out_dir)
+    m = data.metadata
+    print(f"{args.dataset}: {m['cleaning']['rows_loaded']} rows loaded, "
+          f"{m['n_features']} features, split={cfg.split}")
+    for k, v in m["cleaning"].items():
+        if k != "rows_loaded":
+            print(f"  {k}: {v}")
+    for name, s in m["splits"].items():
+        print(f"  {name:<5} rows={s['rows']:<9} attack_rate={s['attack_rate']:<7} {s['label_family']}")
+    if any(m["families_unseen_in_train"].values()):
+        print(f"  families not seen in train: {m['families_unseen_in_train']}")
+    print(f"Saved -> {path}")
+
+
 def cmd_benchmark(args: argparse.Namespace) -> None:
     cfg = load_config(args.config)
     methods = {"hop_shortest": hop_shortest_paths, "risk_weighted": risk_weighted_paths}
@@ -152,6 +187,15 @@ def main(argv: list[str] | None = None) -> None:
     a.add_argument("scenario")
     a.add_argument("-k", type=int, default=5)
     a.set_defaults(func=cmd_analyze)
+
+    pr = sub.add_parser("prepare", help="clean and split a public dataset (leakage-aware)")
+    pr.add_argument("dataset", choices=["cicids2017", "unsw-nb15"])
+    pr.add_argument("--config", default="configs/default.yaml")
+    pr.add_argument("--raw", help="override raw_dir from config")
+    pr.add_argument("--out", help="override out_dir from config")
+    pr.add_argument("--split", choices=["day", "official", "random"])
+    pr.add_argument("--sample", type=float, help="keep this fraction of rows per file")
+    pr.set_defaults(func=cmd_prepare)
 
     b = sub.add_parser("benchmark", help="compare path baselines on synthetic scenarios")
     b.add_argument("--count", type=int, default=100)
