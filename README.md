@@ -18,8 +18,8 @@ B.Tech CSE major project and research prototype. AegisMind models an enterprise-
 | 1+ | Minimal digital-twin what-if engine and path metrics (Top-k, MRR, edge F1) | ✅ Done |
 | 2 | CICIDS2017 / UNSW-NB15 loaders and leakage-aware preprocessing | ✅ Done |
 | 3 | Baseline detectors (4 supervised + Isolation Forest), F1 and FPR-budget thresholds, per-family detection | ✅ Done |
-| 4 | Graph-context path scoring and MITRE ATT&CK evidence | ⏳ Next |
-| 5 | Defense optimizer, explainability layer and analyst feedback loop | ⏳ |
+| 4 | Graph-context path model fusing detector alerts with graph features; benchmark and ablation | ✅ Done |
+| 5 | Defense optimizer, explainability layer and analyst feedback loop | ⏳ Next |
 | 6 | FastAPI and React dashboard | ⏳ |
 | 7 | Evaluation, ablations and paper draft | ⏳ |
 
@@ -112,6 +112,35 @@ python -m aegismind.cli detect cicids2017 --models random_forest,iforest
 
 > **First finding (CICIDS2017, day split, all test attacks unseen in training):** with the `val_f1` threshold the best test F1 was 0.68 (Logistic Regression, but at 10.6% FPR). Random Forest had the best ranking (PR-AUC 0.88) but missed most attacks, because the threshold tuned on Thursday's web attacks did not transfer to Friday's DDoS, PortScan and Bot traffic. The `fpr_budget` strategy and the benign-only Isolation Forest were added to study this threshold-transfer problem.
 
+## Attack-path prediction with alert evidence (Sprint 4)
+
+```bash
+python -m aegismind.cli pathbench                                    # train 400 / test 200 scenarios
+python -m aegismind.cli pathbench --test-alerts "0.6:0.01,0.37:0.0011,0.62:0.106,0.2:0.05,0:0"
+```
+
+**How it works:**
+1. Every scenario's telemetry goes through a *simulated* detector with a set recall and false-positive rate. Use the measured Sprint 3 numbers here. The flagged events are counted per graph edge.
+2. `graph_context+evidence` learns which next hop an attacker takes. For each candidate edge it uses edge features (exploitability, relation type), graph context (zone, criticality, distance and progress toward the target, out-degree) and alert evidence (alerts on the edge, alert rate, alerts on edges leaving the next node). A gradient-boosted classifier is trained on next-hop decisions from training seeds only.
+3. Beam search turns those per-step probabilities into ranked full paths from the entry point to the target.
+4. Results are compared against hop-shortest, risk-weighted and a heuristic `risk_weighted+alerts`, and against `graph_context` (no alerts) as an ablation.
+
+**Result on 200 held-out synthetic scenarios** (trained with alerts at recall 0.6 / FPR 0.01):
+
+| Test detector (recall / FPR) | risk_weighted MRR | risk_weighted+alerts MRR | graph_context MRR | **graph_context+evidence MRR** |
+|---|---|---|---|---|
+| 0.60 / 0.010 (training setting) | 0.345 | 0.627 | 0.296 | **0.902** |
+| 0.37 / 0.0011 (like Random Forest, Sprint 3) | 0.345 | 0.533 | 0.296 | **0.763** |
+| 0.62 / 0.106 (like Logistic Regression, Sprint 3) | 0.345 | 0.545 | 0.296 | **0.682** |
+| 0.20 / 0.050 (weak detector) | 0.345 | 0.420 | 0.296 | **0.452** |
+| 0 / 0 (no alerts) | 0.345 | 0.345 | 0.296 | 0.297 |
+
+**What this shows:**
+- Fusing alert evidence with graph context beats the heuristic at every detector quality level, and the gap is largest when the detector is good.
+- Graph structure alone (`graph_context`) does *not* beat exploitability. In this generator the attacker chooses paths from exploitability only, so there is no extra structural signal to learn. Report this as an honest ablation and a threat to validity.
+- With no alerts the model falls back to roughly the graph-only level, which is slightly below the risk-weighted baseline.
+- Permutation importance confirms that alerts on the candidate edge, followed by downstream alerts, drive the predictions.
+
 ## Repository layout
 
 ```
@@ -130,7 +159,10 @@ aegismind/
   graph/
     paths.py        # path baselines, blast radius, choke points, min-cut
     metrics.py      # Top-k hit, MRR, edge P/R/F1, next-hop accuracy
-  cli.py            # generate | analyze | prepare | detect | benchmark
+    evidence.py     # simulated detector alerts aggregated per graph edge
+    learned.py      # graph-context next-hop model + beam search
+    pathbench.py    # path benchmark: baselines vs learned, alert sweeps
+  cli.py            # generate | analyze | prepare | detect | benchmark | pathbench
 configs/default.yaml
 docs/               # data dictionary, threat model
 tests/

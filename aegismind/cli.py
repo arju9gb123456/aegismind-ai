@@ -155,6 +155,50 @@ def cmd_detect(args: argparse.Namespace) -> None:
     print(f"\nSaved report -> {baseline.save_report(report, args.out)}")
 
 
+def _parse_settings(text: str | None) -> list[tuple[float, float]] | None:
+    """'0.6:0.01,0.3:0.05' -> [(0.6, 0.01), (0.3, 0.05)]"""
+    if not text:
+        return None
+    out = []
+    for part in text.split(","):
+        r, f = part.split(":")
+        out.append((float(r), float(f)))
+    return out
+
+
+def cmd_pathbench(args: argparse.Namespace) -> None:
+    from aegismind.graph import pathbench
+
+    cfg = load_config(args.config)
+    train_seeds = range(args.train_seed, args.train_seed + args.train_count)
+    test_seeds = range(args.seed, args.seed + args.count)
+    overlap = set(train_seeds) & set(test_seeds)
+    if overlap:
+        sys.exit(f"train and test seeds overlap ({len(overlap)} seeds); change --train-seed")
+    settings = _parse_settings(args.test_alerts)
+    print(f"Attack-path benchmark: train seeds {train_seeds.start}..{train_seeds.stop - 1}, "
+          f"test seeds {test_seeds.start}..{test_seeds.stop - 1}, "
+          f"training alerts recall={args.recall} fpr={args.fpr}")
+    report = pathbench.run_pathbench(cfg, train_seeds, test_seeds, args.recall, args.fpr,
+                                     test_settings=settings, seed=42,
+                                     importance=not args.no_importance)
+    report["git_commit"] = _git_commit()
+    report["aegismind_version"] = __version__
+    for run in report["runs"]:
+        print(f"\nTest alerts: recall={run['test_recall']} fpr={run['test_fpr']}")
+        print(pathbench.results_table(run))
+    if "feature_importance" in report:
+        top = report["feature_importance"]["graph_context+evidence"][:6]
+        print("\nMost useful features (graph_context+evidence, permutation importance):")
+        for f in top:
+            print(f"  {f['feature']:<24} {f['importance']:.4f}")
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    f = out / f"pathbench_{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.json"
+    f.write_text(json.dumps(report, indent=2))
+    print(f"\nSaved experiment record -> {f}")
+
+
 def cmd_benchmark(args: argparse.Namespace) -> None:
     cfg = load_config(args.config)
     methods = {"hop_shortest": hop_shortest_paths, "risk_weighted": risk_weighted_paths}
@@ -239,6 +283,20 @@ def main(argv: list[str] | None = None) -> None:
     d.add_argument("--data", help="override prepared data directory")
     d.add_argument("--out", default="experiments")
     d.set_defaults(func=cmd_detect)
+
+    pb = sub.add_parser("pathbench",
+                        help="attack-path prediction with alert evidence (learned vs baselines)")
+    pb.add_argument("--count", type=int, default=200, help="test scenarios")
+    pb.add_argument("--seed", type=int, default=1, help="first test seed")
+    pb.add_argument("--train-count", type=int, default=400)
+    pb.add_argument("--train-seed", type=int, default=1000)
+    pb.add_argument("--recall", type=float, default=0.6, help="simulated detector recall")
+    pb.add_argument("--fpr", type=float, default=0.01, help="simulated detector false-positive rate")
+    pb.add_argument("--test-alerts", help="other test settings, e.g. '0.6:0.01,0.3:0.05,0.9:0.001'")
+    pb.add_argument("--no-importance", action="store_true", help="skip permutation importance")
+    pb.add_argument("--config", default="configs/default.yaml")
+    pb.add_argument("--out", default="experiments")
+    pb.set_defaults(func=cmd_pathbench)
 
     b = sub.add_parser("benchmark", help="compare path baselines on synthetic scenarios")
     b.add_argument("--count", type=int, default=100)
