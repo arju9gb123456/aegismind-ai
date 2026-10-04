@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.pytest_cache/
+.ipynb_checkpoints/
+.DS_Store
+
+# datasets and generated outputs stay out of git
+data/raw/*
+data/processed/*
+data/scenarios/*
+experiments/*
+!data/**/.gitkeep
+!experiments/.gitkeep

@@ -1,0 +1,18 @@
+# AegisMind AI — default experiment configuration
+# Every value here is recorded in experiment outputs for reproducibility.
+
+generator:
+  workstations: [8, 25]
+  admin_workstations: [1, 2]
+  web_servers: [1, 2]
+  app_servers: [2, 4]
+  db_servers: [1, 2]
+  p_lateral_smb: 0.15
+  p_cached_admin: 0.20
+  p_ws_rdp_admin: 0.10
+  max_hops: 6
+  candidate_paths: 30
+  attacker_temperature: 1.5   # >1 = less optimal simulated attacker
+  observation_noise: 0.15     # noise on exploitability values the defender sees
+  background_events: [300, 800]
+  window_hours: 24

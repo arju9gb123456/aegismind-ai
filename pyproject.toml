@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aegismind"
+version = "0.1.0"
+description = "Graph-based cyber attack-path prediction with a digital-twin simulator and explainable AI (research prototype)"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Arjun Ahirwar" }]
+license = { text = "MIT" }
+dependencies = ["networkx>=3.2", "numpy>=1.26", "pandas>=2.1", "pyyaml>=6.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+aegismind = "aegismind.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["aegismind*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
