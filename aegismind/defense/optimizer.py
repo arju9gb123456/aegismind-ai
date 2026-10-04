@@ -122,7 +122,7 @@ class Evaluation:
                        "rollback": self.action.rollback()}
         for k in ("risk_before", "risk_after", "risk_reduction", "service_disruption",
                   "action_cost", "uncertainty", "utility"):
-            d[k] = round(d[k], 4)
+            d[k] = round(d[k], 4) if math.isfinite(d[k]) else None  # JSON has no infinity
         return d
 
 

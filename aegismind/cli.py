@@ -292,6 +292,19 @@ def cmd_pathbench(args: argparse.Namespace) -> None:
     print(f"\nSaved experiment record -> {f}")
 
 
+def cmd_serve(args: argparse.Namespace) -> None:
+    import uvicorn
+
+    dist = Path("frontend/dist")
+    if dist.exists():
+        print(f"Dashboard: http://localhost:{args.port}")
+    else:
+        print("API only (frontend not built). Build the dashboard with:\n"
+              "  cd frontend && npm install && npm run build")
+    print(f"API docs:  http://localhost:{args.port}/docs")
+    uvicorn.run("aegismind.api.app:app", host=args.host, port=args.port, reload=args.reload)
+
+
 def cmd_benchmark(args: argparse.Namespace) -> None:
     cfg = load_config(args.config)
     methods = {"hop_shortest": hop_shortest_paths, "risk_weighted": risk_weighted_paths}
@@ -378,6 +391,12 @@ def main(argv: list[str] | None = None) -> None:
     d.add_argument("--data", help="override prepared data directory")
     d.add_argument("--out", default="experiments")
     d.set_defaults(func=cmd_detect)
+
+    sv = sub.add_parser("serve", help="run the API and the 3D dashboard")
+    sv.add_argument("--port", type=int, default=8000)
+    sv.add_argument("--host", default="127.0.0.1")
+    sv.add_argument("--reload", action="store_true")
+    sv.set_defaults(func=cmd_serve)
 
     rc = sub.add_parser("recommend", help="explain the likely attack path and rank defensive actions")
     rc.add_argument("scenario")

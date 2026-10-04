@@ -20,8 +20,8 @@ B.Tech CSE major project and research prototype. AegisMind models an enterprise-
 | 3 | Baseline detectors (4 supervised + Isolation Forest), F1 and FPR-budget thresholds, per-family detection | ✅ Done |
 | 4 | Graph-context path model fusing detector alerts with graph features; benchmark and ablation | ✅ Done |
 | 5 | Defense optimizer (utility + constraints), explanations (path evidence, SHAP/occlusion), analyst feedback loop | ✅ Done |
-| 6 | FastAPI and React dashboard | ⏳ Next |
-| 7 | Evaluation, ablations and paper draft | ⏳ |
+| 6 | FastAPI backend + 3D React dashboard (network floors, attack-path particles, actions, labs) | ✅ Done |
+| 7 | Evaluation, ablations and paper draft | ⏳ Next |
 
 ## Why synthetic scenarios?
 
@@ -174,6 +174,37 @@ Each candidate is simulated on a copy of the digital twin and scored with the re
 
 **Feedback loop.** Approve or reject decisions are appended to `experiments/feedback.jsonl`. Each action type then gets a transparent penalty, `ρ·(reject_rate − 0.5)` with a Beta(1,1) prior, so action types analysts keep rejecting rank lower next time. Every decision that shaped the ranking stays on record.
 
+## 3D dashboard (Sprint 6)
+
+![AegisMind dashboard](docs/dashboard.png)
+
+**First time only** (Node.js 18+):
+```bash
+cd frontend
+npm install
+npm run build
+cd ..
+```
+
+**Every time:**
+```bash
+python -m aegismind.cli serve      # open http://localhost:8000
+```
+
+On first run the dashboard creates 12 demo incidents in `data/scenarios/` if that folder is empty.
+
+| View | What it shows |
+|---|---|
+| **Live incident** | Threat level, risk gauge and KPIs. A 3D map with each network zone on its own floor: user, DMZ, server and data. Crown jewels are gold with a spinning ring, the foothold pulses red, and particles flow along the predicted attack path. Hover a node or link for details; click a node to focus it or mark it "never isolate". Detector recall and false-alarm sliders update everything live. |
+| **Predicted attack path** | The top 5 ranked paths, each step with its ATT&CK technique, alerts and estimated success. A toggle overlays the actual path (synthetic scenarios only). |
+| **Recommended actions** | Ranked actions with risk cut, disruption, uncertainty and utility. **Simulate** runs the what-if on the twin and greys out the blocked links in 3D. **Approve/Reject** feeds the learning loop. |
+| **Detector lab** | F1 per model across datasets and splits, a best-F1 vs 1% false-alarm toggle, and a per-attack-family heatmap with "unseen" badges. Data comes from `experiments/detectors_*.json`. |
+| **Path lab** | MRR of every path method across detector quality levels, plus the path model's feature importance. Data comes from `experiments/pathbench_*.json`. |
+
+**Frontend development** (hot reload): run `python -m aegismind.cli serve` in one terminal and `cd frontend && npm run dev` in another, then open http://localhost:5173. API calls are proxied to port 8000. API docs are at http://localhost:8000/docs.
+
+Stack: FastAPI · React 19 · TypeScript · Vite · three.js / react-force-graph-3d · Recharts · Framer Motion.
+
 ## Repository layout
 
 ```
@@ -191,6 +222,7 @@ aegismind/
     optimizer.py    # action catalog, utility, constraints, greedy plan
     feedback.py     # analyst approve/reject log -> preference penalty
   explain.py        # path evidence explanations; SHAP / occlusion for detectors
+  api/app.py        # FastAPI backend for the dashboard
   detect/
     baseline.py     # classical detectors, thresholds, per-family metrics
   graph/
@@ -199,7 +231,8 @@ aegismind/
     evidence.py     # simulated detector alerts aggregated per graph edge
     learned.py      # graph-context next-hop model + beam search
     pathbench.py    # path benchmark: baselines vs learned, alert sweeps
-  cli.py            # generate | analyze | prepare | detect | benchmark | pathbench | recommend | feedback
+  cli.py            # generate | analyze | prepare | detect | benchmark | pathbench | recommend | feedback | serve
+frontend/           # React + TypeScript + three.js dashboard (Vite)
 configs/default.yaml
 docs/               # data dictionary, threat model
 tests/
