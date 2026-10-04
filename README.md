@@ -17,8 +17,8 @@ B.Tech CSE major project and research prototype. AegisMind models an enterprise-
 | 1+ | NetworkX baselines: hop-shortest and risk-weighted paths, blast radius, choke points, min-cut | ✅ Done |
 | 1+ | Minimal digital-twin what-if engine and path metrics (Top-k, MRR, edge F1) | ✅ Done |
 | 2 | CICIDS2017 / UNSW-NB15 loaders and leakage-aware preprocessing | ✅ Done |
-| 3 | Baseline detector (scikit-learn) with metrics and confusion matrix | ⏳ Next |
-| 4 | Graph-context path scoring and MITRE ATT&CK evidence | ⏳ |
+| 3 | Baseline detectors (LogReg, Decision Tree, Random Forest, HistGB): val-chosen threshold, per-family detection | ✅ Done |
+| 4 | Graph-context path scoring and MITRE ATT&CK evidence | ⏳ Next |
 | 5 | Defense optimizer, explainability layer and analyst feedback loop | ⏳ |
 | 6 | FastAPI and React dashboard | ⏳ |
 | 7 | Evaluation, ablations and paper draft | ⏳ |
@@ -89,6 +89,22 @@ python -m aegismind.cli prepare unsw-nb15                  # official train/test
 
 > **Note for the paper:** with the CICIDS2017 day split (train Mon–Wed, test Fri), PortScan and DDoS appear only in the test set. Binary detection on that split therefore measures generalization to *unseen* attack families. Report it as the main result and the random split as an in-distribution upper bound.
 
+## Baseline detectors
+
+```bash
+python -m aegismind.cli detect cicids2017 --max-train-rows 300000   # quick first run
+python -m aegismind.cli detect cicids2017                           # full training split
+python -m aegismind.cli detect unsw-nb15
+python -m aegismind.cli detect cicids2017 --models random_forest,hist_gb
+```
+
+- **Models:** Logistic Regression, Decision Tree, Random Forest and Histogram Gradient Boosting, all class-balanced.
+- **Threshold:** chosen on the **validation** split (max F1), then frozen for the test split.
+- **Test metrics:** precision, recall, F1, PR-AUC, ROC-AUC, false-positive rate and the confusion matrix.
+- **Per-family detection rate:** families never seen in training are marked `NO`, so you can see how well each model generalizes to new attack types.
+- **Top features:** impurity importance for tree models, absolute coefficients for Logistic Regression. This is an early look ahead of the XAI module.
+- Every run saves a JSON report to `experiments/` with the data fingerprint, seed and git commit.
+
 ## Repository layout
 
 ```
@@ -102,10 +118,12 @@ aegismind/
     cicids.py       # CICIDS2017 loader (header, Infinity, label-encoding quirks)
     unsw.py         # UNSW-NB15 loader (official partition, categoricals)
     preprocess.py   # clean -> split -> fit-on-train -> save, with metadata
+  detect/
+    baseline.py     # classical detectors, thresholds, per-family metrics
   graph/
     paths.py        # path baselines, blast radius, choke points, min-cut
     metrics.py      # Top-k hit, MRR, edge P/R/F1, next-hop accuracy
-  cli.py            # generate | analyze | prepare | benchmark
+  cli.py            # generate | analyze | prepare | detect | benchmark
 configs/default.yaml
 docs/               # data dictionary, threat model
 tests/

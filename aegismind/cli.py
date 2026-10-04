@@ -125,6 +125,30 @@ def cmd_prepare(args: argparse.Namespace) -> None:
     print(f"Saved -> {path}")
 
 
+def cmd_detect(args: argparse.Namespace) -> None:
+    from aegismind.data import preprocess
+    from aegismind.detect import baseline
+
+    conf = yaml.safe_load(Path(args.config).read_text())["datasets"][args.dataset]
+    proc = Path(args.data or conf["out_dir"])
+    if not (proc / "metadata.json").exists():
+        sys.exit(f"No prepared data in {proc}. Run: python -m aegismind.cli prepare {args.dataset}")
+    print(f"Loading {proc} ...")
+    data = preprocess.load(proc)
+    models = [m.strip() for m in args.models.split(",")]
+    print(f"Training {', '.join(models)} on {len(data.train):,} train rows "
+          f"(max {args.max_train_rows or 'all'}), {len(data.features)} features")
+    report = baseline.run_detectors(data, models, seed=args.seed,
+                                    max_train_rows=args.max_train_rows)
+    report["git_commit"] = _git_commit()
+    report["aegismind_version"] = __version__
+    print("\nTest results (threshold chosen on validation):")
+    print(baseline.summary_table(report))
+    print("\nTest detection rate by family (Benign row = false positive rate):")
+    print(baseline.family_table(report))
+    print(f"\nSaved report -> {baseline.save_report(report, args.out)}")
+
+
 def cmd_benchmark(args: argparse.Namespace) -> None:
     cfg = load_config(args.config)
     methods = {"hop_shortest": hop_shortest_paths, "risk_weighted": risk_weighted_paths}
@@ -196,6 +220,17 @@ def main(argv: list[str] | None = None) -> None:
     pr.add_argument("--split", choices=["day", "official", "random"])
     pr.add_argument("--sample", type=float, help="keep this fraction of rows per file")
     pr.set_defaults(func=cmd_prepare)
+
+    d = sub.add_parser("detect", help="train and evaluate baseline intrusion detectors")
+    d.add_argument("dataset", choices=["cicids2017", "unsw-nb15"])
+    d.add_argument("--models", default="logreg,decision_tree,random_forest,hist_gb")
+    d.add_argument("--max-train-rows", type=int, default=None,
+                   help="stratified subsample of train rows (faster runs)")
+    d.add_argument("--seed", type=int, default=42)
+    d.add_argument("--config", default="configs/default.yaml")
+    d.add_argument("--data", help="override prepared data directory")
+    d.add_argument("--out", default="experiments")
+    d.set_defaults(func=cmd_detect)
 
     b = sub.add_parser("benchmark", help="compare path baselines on synthetic scenarios")
     b.add_argument("--count", type=int, default=100)
