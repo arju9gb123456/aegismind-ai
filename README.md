@@ -190,6 +190,7 @@ cd ..
 ```bash
 python -m aegismind.cli serve      # open http://localhost:8000
 ```
+On Windows you can instead double-click **`start-dashboard.bat`**. It uses the project's `.venv`, builds the dashboard if needed, picks a free port and opens the browser.
 
 On first run the dashboard creates 12 demo incidents in `data/scenarios/` if that folder is empty.
 
