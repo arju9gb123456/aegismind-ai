@@ -50,9 +50,20 @@ LABEL_FAMILY = {
 IDENTIFIER_COLUMNS = ["Flow ID", "Source IP", "Source Port", "Destination IP", "Timestamp"]
 
 
+WEB_ATTACK_RE = re.compile(r"^Web Attack.*?(Brute Force|XSS|Sql Injection)\s*$", re.IGNORECASE)
+WEB_ATTACK_CANON = {"brute force": "Brute Force", "xss": "XSS", "sql injection": "Sql Injection"}
+
+
 def normalise_label(label: str) -> str:
+    """Strip spaces and repair the web-attack dash, whatever encoding mangled it.
+
+    Seen in the wild: ``\\x96`` (cp1252 read as latin-1), ``\\ufffd`` (replacement
+    char), ``ï¿½`` (UTF-8 replacement char read as latin-1), plain ``-``.
+    """
     s = str(label).strip()
-    s = re.sub(r"Web Attack\s*[^\w\s]+\s*", "Web Attack - ", s)  # fix mis-encoded dash
+    m = WEB_ATTACK_RE.match(s)
+    if m:
+        return f"Web Attack - {WEB_ATTACK_CANON[m.group(1).lower()]}"
     return s
 
 

@@ -16,6 +16,9 @@ from .fixtures import write_cicids, write_unsw
 def test_label_normalisation():
     assert normalise_label(" Web Attack \x96 XSS") == "Web Attack - XSS"
     assert normalise_label("Web Attack � Sql Injection") == "Web Attack - Sql Injection"
+    # UTF-8 replacement char read as latin-1 (seen in real downloads)
+    assert normalise_label("Web Attack ï¿½ Brute Force") == "Web Attack - Brute Force"
+    assert normalise_label("Web Attack - XSS") == "Web Attack - XSS"
     assert normalise_label("BENIGN ") == "BENIGN"
     assert day_from_filename("Wednesday-workingHours.pcap_ISCX.csv") == "Wednesday"
 
@@ -28,6 +31,16 @@ def test_load_cicids_handles_quirks(tmp_path):
     assert "WebAttack" in set(df["label_family"])
     assert df.loc[df["label"] == "BENIGN", "is_attack"].eq(0).all()
     assert np.isinf(df["Flow Bytes/s"]).any()  # cleaning happens in prepare()
+
+
+def test_load_cicids_utf8_replacement_char(tmp_path):
+    """Some downloads store the web-attack dash as UTF-8 U+FFFD."""
+    raw = write_cicids(tmp_path / "raw")
+    f = raw / "Thursday-WorkingHours-Morning-WebAttacks.pcap_ISCX.csv"
+    f.write_bytes(f.read_bytes().decode("latin-1").replace("\x96", "�").encode("utf-8"))
+    df = load_cicids2017(raw)
+    assert set(df.loc[df["label_family"] == "WebAttack", "label"]) == {
+        "Web Attack - Brute Force", "Web Attack - XSS"}
 
 
 def test_unknown_label_rejected(tmp_path):
