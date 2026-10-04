@@ -19,8 +19,8 @@ B.Tech CSE major project and research prototype. AegisMind models an enterprise-
 | 2 | CICIDS2017 / UNSW-NB15 loaders and leakage-aware preprocessing | ✅ Done |
 | 3 | Baseline detectors (4 supervised + Isolation Forest), F1 and FPR-budget thresholds, per-family detection | ✅ Done |
 | 4 | Graph-context path model fusing detector alerts with graph features; benchmark and ablation | ✅ Done |
-| 5 | Defense optimizer, explainability layer and analyst feedback loop | ⏳ Next |
-| 6 | FastAPI and React dashboard | ⏳ |
+| 5 | Defense optimizer (utility + constraints), explanations (path evidence, SHAP/occlusion), analyst feedback loop | ✅ Done |
+| 6 | FastAPI and React dashboard | ⏳ Next |
 | 7 | Evaluation, ablations and paper draft | ⏳ |
 
 ## Why synthetic scenarios?
@@ -141,6 +141,39 @@ python -m aegismind.cli pathbench --test-alerts "0.6:0.01,0.37:0.0011,0.62:0.106
 - With no alerts the model falls back to roughly the graph-only level, which is slightly below the risk-weighted baseline.
 - Permutation importance confirms that alerts on the candidate edge, followed by downstream alerts, drive the predictions.
 
+## Recommendations, explanations and feedback (Sprint 5)
+
+```bash
+python -m aegismind.cli recommend data/scenarios/scn-0001                 # explain path + rank actions
+python -m aegismind.cli recommend data/scenarios/scn-0001 --protect PC-16 # never isolate PC-16
+python -m aegismind.cli feedback data/scenarios/scn-0001 --action 1 --decision reject --note "CEO laptop"
+python -m aegismind.cli detect cicids2017 --explain 5                     # why flows were flagged
+pip install shap                                                          # optional: SHAP explanations
+```
+
+**Defense optimizer.** Candidate actions are generated from the predicted paths:
+- block a connection
+- restrict a service
+- require MFA for privileged logins
+- reset cached admin credentials
+- isolate an asset
+
+Each candidate is simulated on a copy of the digital twin and scored with the report's utility:
+
+`Utility = risk_reduction − λ·service_disruption − µ·action_cost − ν·uncertainty`   (defaults λ=0.6, µ=0.1, ν=0.5)
+
+- **Risk:** criticality-weighted best-path probability from the foothold to each crown jewel. Edges with detector alerts count as more likely.
+- **Service disruption:** the weighted share of business connectivity that the action disables. Credential misconfigurations count as zero business value, so fixing them is "free".
+- **Uncertainty:** the spread of the risk reduction when the defender's exploitability estimates are perturbed (Monte Carlo).
+- **Hard constraints:** an action is rejected if it cuts workstation→app HTTP, app→database SQL or LDAP to the domain controller, or if it isolates a protected asset. Crown jewels and the domain controller are always protected.
+- **Output:** ranked single actions, plus a greedy plan of up to 3 actions with a rollback note for each. Nothing is executed; every action requires human approval.
+
+**Explanations.**
+- *Path:* each step shows the ATT&CK technique, the estimated success probability, alerts out of total events, and whether the next node is a crown jewel. With the learned model, it also shows how much the alerts changed that step's probability.
+- *Detector:* SHAP values when `shap` is installed (TreeExplainer or LinearExplainer); otherwise an occlusion fallback that replaces each feature with its training median. SHAP units differ by model, so compare feature rankings across models, not raw values.
+
+**Feedback loop.** Approve or reject decisions are appended to `experiments/feedback.jsonl`. Each action type then gets a transparent penalty, `ρ·(reject_rate − 0.5)` with a Beta(1,1) prior, so action types analysts keep rejecting rank lower next time. Every decision that shaped the ranking stays on record.
+
 ## Repository layout
 
 ```
@@ -154,6 +187,10 @@ aegismind/
     cicids.py       # CICIDS2017 loader (header, Infinity, label-encoding quirks)
     unsw.py         # UNSW-NB15 loader (official partition, categoricals)
     preprocess.py   # clean -> split -> fit-on-train -> save, with metadata
+  defense/
+    optimizer.py    # action catalog, utility, constraints, greedy plan
+    feedback.py     # analyst approve/reject log -> preference penalty
+  explain.py        # path evidence explanations; SHAP / occlusion for detectors
   detect/
     baseline.py     # classical detectors, thresholds, per-family metrics
   graph/
@@ -162,7 +199,7 @@ aegismind/
     evidence.py     # simulated detector alerts aggregated per graph edge
     learned.py      # graph-context next-hop model + beam search
     pathbench.py    # path benchmark: baselines vs learned, alert sweeps
-  cli.py            # generate | analyze | prepare | detect | benchmark | pathbench
+  cli.py            # generate | analyze | prepare | detect | benchmark | pathbench | recommend | feedback
 configs/default.yaml
 docs/               # data dictionary, threat model
 tests/
@@ -174,6 +211,12 @@ experiments/        # benchmark records (git-ignored)
 
 - [Data dictionary](docs/data_dictionary.md)
 - [Threat model and scope](docs/threat_model.md)
+
+## Future scope
+
+- **Infrastructure health signals in the digital twin.** Examples are disk SMART data, disk-capacity trends, link errors and port status. An unhealthy or overloaded asset changes both the attack paths and the cost of a defensive action. This is out of scope for the current security-focused prototype.
+- Evaluation on authorized lab telemetry, such as Zeek logs from an isolated virtual network.
+- Temporal graph models and calibrated uncertainty for path predictions.
 
 ## Tech stack
 

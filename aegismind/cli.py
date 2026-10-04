@@ -140,7 +140,8 @@ def cmd_detect(args: argparse.Namespace) -> None:
           f"(max {args.max_train_rows or 'all'}), {len(data.features)} features")
     report = baseline.run_detectors(data, models, seed=args.seed,
                                     max_train_rows=args.max_train_rows,
-                                    fpr_budget=args.fpr_budget)
+                                    fpr_budget=args.fpr_budget,
+                                    explain_rows=args.explain)
     report["git_commit"] = _git_commit()
     report["aegismind_version"] = __version__
     for strat in baseline.STRATEGIES:
@@ -152,7 +153,99 @@ def cmd_detect(args: argparse.Namespace) -> None:
         print(baseline.summary_table(report, strat))
         print("\nTest detection rate by family (Benign row = false positive rate):")
         print(baseline.family_table(report, strat))
+    for r in report["results"]:
+        exp = r.get("explanation")
+        if not exp:
+            continue
+        print(f"\nWhy {r['model']} flags flows as attacks ({exp['method']}), top features overall:")
+        for f in exp["global"][:5]:
+            print(f"  {f['feature']:<32} {f['mean_abs_contribution']:.4f}")
+        row = exp["explained_rows"][0]
+        print(f"  example: test row {row['test_row']} ({row['true_family']}, score {row['score']}) <- "
+              + ", ".join(f"{t['feature']} {t['contribution']:+.3f}" for t in row["top"][:3]))
     print(f"\nSaved report -> {baseline.save_report(report, args.out)}")
+
+
+def cmd_recommend(args: argparse.Namespace) -> None:
+    from aegismind.defense.feedback import FeedbackStore
+    from aegismind.defense.optimizer import OptimizerConfig, recommend
+    from aegismind.explain import explain_path, path_summary
+    import csv
+
+    from aegismind.graph.evidence import alert_weighted_graph, simulate_alerts
+
+    s = Scenario.load(args.scenario)
+    with (Path(args.scenario) / "events.csv").open(newline="") as fh:
+        events = list(csv.DictReader(fh))
+    t = s.defender_view()
+    g = t.to_networkx()
+    ev = simulate_alerts(events, args.recall, args.fpr, seed=s.seed + 7919)
+    entry, target = s.campaign["entry"], s.campaign["target"]
+    ranked = risk_weighted_paths(alert_weighted_graph(g, ev), entry, target, k=args.k)
+    paths = [rp.path for rp in ranked]
+    print(f"Scenario {s.scenario_id}: suspected foothold {entry}, likely target {target}, "
+          f"{ev.total_alerts} alerts (detector recall={args.recall}, fpr={args.fpr})")
+    if not paths:
+        sys.exit("No path from the foothold to the target; nothing to recommend.")
+    steps = explain_path(g, paths[0], ev)
+    print(f"\nMost likely path: {' -> '.join(paths[0])}")
+    print(f"  {path_summary(steps)}")
+    for st in steps:
+        print(f"  {st['step']}. {st['src']} -> {st['dst']}: " + "; ".join(st["reasons"]))
+
+    store = FeedbackStore(args.feedback_file)
+    pen = store.preference_penalty()
+    cfg = OptimizerConfig(lam=args.lam, mu=args.mu, nu=args.nu, max_actions=args.max_actions)
+    protected = {p.strip() for p in args.protect.split(",")} if args.protect else set()
+    rec = recommend(t, entry, paths, cfg, protected=protected, preference_penalty=pen,
+                    evidence=ev)
+    if pen:
+        print(f"\nAnalyst feedback applied: {pen}")
+    print(f"\nRanked actions ({rec['candidates_considered']} considered; "
+          f"utility = risk_reduction - {cfg.lam}*disruption - {cfg.mu}*cost - {cfg.nu}*uncertainty):")
+    print(f"  {'#':>2} {'utility':>8} {'risk-':>7} {'disrupt':>8} {'uncert':>7}  action")
+    feasible = [a for a in rec["ranked_actions"] if a["feasible"]]
+    for i, a in enumerate(feasible[:args.top], 1):
+        print(f"  {i:>2} {a['utility']:>8.3f} {a['risk_reduction']:>7.1%} "
+              f"{a['service_disruption']:>8.1%} {a['uncertainty']:>7.3f}  {a['action']['description']}")
+    rejected = [a for a in rec["ranked_actions"] if not a["feasible"]]
+    if rejected:
+        print(f"  ({len(rejected)} rejected by constraints, e.g. "
+              f"'{rejected[0]['action']['description']}': {rejected[0]['rejected_reason']})")
+    ps = rec["plan_summary"]
+    print(f"\nRecommended plan ({ps['actions']} action(s)): risk {ps['risk_before']} -> "
+          f"{ps['risk_after']} (-{ps['risk_reduction']:.0%}), service disruption {ps['service_disruption']:.1%}")
+    for i, a in enumerate(rec["plan"], 1):
+        print(f"  {i}. {a['action']['description']}  [rollback: {a['action']['rollback']}]")
+    print(f"\n{rec['note']}")
+
+    rec.update({"scenario": s.scenario_id, "paths": paths, "path_explanation": steps,
+                "feasible_actions": feasible[:args.top],
+                "detector": {"recall": args.recall, "fpr": args.fpr}})
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    f = out / f"recommend_{s.scenario_id}.json"
+    f.write_text(json.dumps(rec, indent=2, default=str))
+    print(f"Saved -> {f}\nRecord a decision: python -m aegismind.cli feedback {args.scenario} "
+          f"--action 1 --decision approve")
+
+
+def cmd_feedback(args: argparse.Namespace) -> None:
+    from aegismind.defense.feedback import FeedbackStore
+
+    s = Scenario.load(args.scenario)
+    f = Path(args.out) / f"recommend_{s.scenario_id}.json"
+    if not f.exists():
+        sys.exit(f"No recommendations saved for {s.scenario_id}. Run the recommend command first.")
+    rec = json.loads(f.read_text())
+    actions = rec["feasible_actions"]
+    if not 1 <= args.action <= len(actions):
+        sys.exit(f"--action must be between 1 and {len(actions)}")
+    a = actions[args.action - 1]["action"]
+    store = FeedbackStore(args.feedback_file)
+    store.record(s.scenario_id, a, args.decision, args.note or "")
+    print(f"Recorded: {args.decision} '{a['description']}'")
+    print(f"Current preference adjustments: {store.preference_penalty()}")
 
 
 def _parse_settings(text: str | None) -> list[tuple[float, float]] | None:
@@ -274,6 +367,8 @@ def main(argv: list[str] | None = None) -> None:
     d = sub.add_parser("detect", help="train and evaluate baseline intrusion detectors")
     d.add_argument("dataset", choices=["cicids2017", "unsw-nb15"])
     d.add_argument("--models", default="logreg,decision_tree,random_forest,hist_gb,iforest")
+    d.add_argument("--explain", type=int, default=0,
+                   help="explain the N most attack-like test flows per supervised model")
     d.add_argument("--fpr-budget", type=float, default=0.01,
                    help="max false-positive rate on validation benign (default 0.01 = 1%%)")
     d.add_argument("--max-train-rows", type=int, default=None,
@@ -283,6 +378,30 @@ def main(argv: list[str] | None = None) -> None:
     d.add_argument("--data", help="override prepared data directory")
     d.add_argument("--out", default="experiments")
     d.set_defaults(func=cmd_detect)
+
+    rc = sub.add_parser("recommend", help="explain the likely attack path and rank defensive actions")
+    rc.add_argument("scenario")
+    rc.add_argument("--recall", type=float, default=0.6, help="simulated detector recall")
+    rc.add_argument("--fpr", type=float, default=0.01, help="simulated detector false-positive rate")
+    rc.add_argument("-k", type=int, default=5, help="predicted paths used to find candidate actions")
+    rc.add_argument("--max-actions", type=int, default=3)
+    rc.add_argument("--lam", type=float, default=0.6, help="weight of service disruption")
+    rc.add_argument("--mu", type=float, default=0.1, help="weight of action cost")
+    rc.add_argument("--nu", type=float, default=0.5, help="weight of uncertainty")
+    rc.add_argument("--protect", help="comma-separated assets that must never be isolated")
+    rc.add_argument("--top", type=int, default=8)
+    rc.add_argument("--feedback-file", default="experiments/feedback.jsonl")
+    rc.add_argument("--out", default="experiments")
+    rc.set_defaults(func=cmd_recommend)
+
+    fb = sub.add_parser("feedback", help="approve or reject a recommended action")
+    fb.add_argument("scenario")
+    fb.add_argument("--action", type=int, required=True, help="number from the recommend list")
+    fb.add_argument("--decision", choices=["approve", "reject"], required=True)
+    fb.add_argument("--note")
+    fb.add_argument("--feedback-file", default="experiments/feedback.jsonl")
+    fb.add_argument("--out", default="experiments")
+    fb.set_defaults(func=cmd_feedback)
 
     pb = sub.add_parser("pathbench",
                         help="attack-path prediction with alert evidence (learned vs baselines)")

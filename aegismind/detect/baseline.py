@@ -159,7 +159,8 @@ def _subsample(df: pd.DataFrame, max_rows: int | None, seed: int) -> pd.DataFram
 
 def run_detectors(data: PreparedData, models: list[str], seed: int = 42,
                   max_train_rows: int | None = None, fpr_budget: float = 0.01,
-                  iforest_max_benign: int = 200_000, verbose: bool = True) -> dict:
+                  iforest_max_benign: int = 200_000, explain_rows: int = 0,
+                  verbose: bool = True) -> dict:
     if not 0 < fpr_budget < 1:
         raise ValueError("fpr_budget must be between 0 and 1")
     train = _subsample(data.train, max_train_rows, seed)
@@ -200,6 +201,18 @@ def run_detectors(data: PreparedData, models: list[str], seed: int = 42,
                                 for k, t in thr.items()},
             "top_features": top_features(m, data.features),
         }
+        if explain_rows and name in SUPERVISED:
+            from aegismind.explain import explain_detector
+            rng = np.random.default_rng(seed)
+            bg = X_tr[rng.choice(len(X_tr), size=min(500, len(X_tr)), replace=False)]
+            top = np.argsort(s_te)[::-1][:explain_rows]  # most attack-like test flows
+            exp = explain_detector(m, bg, X_te[top], data.features)
+            exp["explained_rows"] = [
+                {"test_row": int(i), "score": round(float(s_te[i]), 5),
+                 "true_family": str(data.test["label_family"].iloc[i]), "top": exp["rows"][k]}
+                for k, i in enumerate(top)]
+            del exp["rows"]
+            r["explanation"] = exp
         results.append(r)
         if verbose:
             a, b = r["test"]["val_f1"], r["test"]["fpr_budget"]
