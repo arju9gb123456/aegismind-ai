@@ -17,7 +17,7 @@ B.Tech CSE major project and research prototype. AegisMind models an enterprise-
 | 1+ | NetworkX baselines: hop-shortest and risk-weighted paths, blast radius, choke points, min-cut | ✅ Done |
 | 1+ | Minimal digital-twin what-if engine and path metrics (Top-k, MRR, edge F1) | ✅ Done |
 | 2 | CICIDS2017 / UNSW-NB15 loaders and leakage-aware preprocessing | ✅ Done |
-| 3 | Baseline detectors (LogReg, Decision Tree, Random Forest, HistGB): val-chosen threshold, per-family detection | ✅ Done |
+| 3 | Baseline detectors (4 supervised + Isolation Forest), F1 and FPR-budget thresholds, per-family detection | ✅ Done |
 | 4 | Graph-context path scoring and MITRE ATT&CK evidence | ⏳ Next |
 | 5 | Defense optimizer, explainability layer and analyst feedback loop | ⏳ |
 | 6 | FastAPI and React dashboard | ⏳ |
@@ -95,15 +95,22 @@ python -m aegismind.cli prepare unsw-nb15                  # official train/test
 python -m aegismind.cli detect cicids2017 --max-train-rows 300000   # quick first run
 python -m aegismind.cli detect cicids2017                           # full training split
 python -m aegismind.cli detect unsw-nb15
-python -m aegismind.cli detect cicids2017 --models random_forest,hist_gb
+python -m aegismind.cli detect cicids2017 --fpr-budget 0.005        # stricter alert budget
+python -m aegismind.cli detect cicids2017 --models random_forest,iforest
 ```
 
-- **Models:** Logistic Regression, Decision Tree, Random Forest and Histogram Gradient Boosting, all class-balanced.
-- **Threshold:** chosen on the **validation** split (max F1), then frozen for the test split.
-- **Test metrics:** precision, recall, F1, PR-AUC, ROC-AUC, false-positive rate and the confusion matrix.
-- **Per-family detection rate:** families never seen in training are marked `NO`, so you can see how well each model generalizes to new attack types.
-- **Top features:** impurity importance for tree models, absolute coefficients for Logistic Regression. This is an early look ahead of the XAI module.
-- Every run saves a JSON report to `experiments/` with the data fingerprint, seed and git commit.
+| Model | Type | Trained on |
+|---|---|---|
+| Logistic Regression, Decision Tree, Random Forest, Histogram Gradient Boosting | Supervised, class-balanced | Labelled train rows |
+| Isolation Forest | Anomaly detection | **Benign train rows only**: it never sees an attack, so it targets unseen attack types |
+
+**Two threshold strategies.** Both are chosen on the validation split and then frozen for the test split:
+- `val_f1`: the threshold that maximizes F1 on validation.
+- `fpr_budget`: the highest-recall threshold that keeps false positives on validation benign traffic within a budget (default **1%**). This is how alerting is tuned in practice.
+
+**Output per strategy:** precision, recall, F1, PR-AUC, ROC-AUC, false-positive rate and the confusion matrix. Each run also reports the **detection rate per attack family**, with families never seen in training marked `NO`, and the top features (impurity importance or |coefficient|). Every run saves a JSON report to `experiments/` with the data fingerprint, seed and git commit.
+
+> **First finding (CICIDS2017, day split, all test attacks unseen in training):** with the `val_f1` threshold the best test F1 was 0.68 (Logistic Regression, but at 10.6% FPR). Random Forest had the best ranking (PR-AUC 0.88) but missed most attacks, because the threshold tuned on Thursday's web attacks did not transfer to Friday's DDoS, PortScan and Bot traffic. The `fpr_budget` strategy and the benign-only Isolation Forest were added to study this threshold-transfer problem.
 
 ## Repository layout
 

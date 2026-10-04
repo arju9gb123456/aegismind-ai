@@ -139,13 +139,19 @@ def cmd_detect(args: argparse.Namespace) -> None:
     print(f"Training {', '.join(models)} on {len(data.train):,} train rows "
           f"(max {args.max_train_rows or 'all'}), {len(data.features)} features")
     report = baseline.run_detectors(data, models, seed=args.seed,
-                                    max_train_rows=args.max_train_rows)
+                                    max_train_rows=args.max_train_rows,
+                                    fpr_budget=args.fpr_budget)
     report["git_commit"] = _git_commit()
     report["aegismind_version"] = __version__
-    print("\nTest results (threshold chosen on validation):")
-    print(baseline.summary_table(report))
-    print("\nTest detection rate by family (Benign row = false positive rate):")
-    print(baseline.family_table(report))
+    for strat in baseline.STRATEGIES:
+        title = baseline.STRATEGY_TITLES[strat]
+        if strat == "fpr_budget":
+            title += f" ({args.fpr_budget:.1%})"
+        print(f"\n=== {title} ===")
+        print("Test results:")
+        print(baseline.summary_table(report, strat))
+        print("\nTest detection rate by family (Benign row = false positive rate):")
+        print(baseline.family_table(report, strat))
     print(f"\nSaved report -> {baseline.save_report(report, args.out)}")
 
 
@@ -223,7 +229,9 @@ def main(argv: list[str] | None = None) -> None:
 
     d = sub.add_parser("detect", help="train and evaluate baseline intrusion detectors")
     d.add_argument("dataset", choices=["cicids2017", "unsw-nb15"])
-    d.add_argument("--models", default="logreg,decision_tree,random_forest,hist_gb")
+    d.add_argument("--models", default="logreg,decision_tree,random_forest,hist_gb,iforest")
+    d.add_argument("--fpr-budget", type=float, default=0.01,
+                   help="max false-positive rate on validation benign (default 0.01 = 1%%)")
     d.add_argument("--max-train-rows", type=int, default=None,
                    help="stratified subsample of train rows (faster runs)")
     d.add_argument("--seed", type=int, default=42)
