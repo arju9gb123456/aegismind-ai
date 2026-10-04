@@ -208,14 +208,24 @@ def _noisy_copy(t: Topology, rng: random.Random, noise: float) -> Topology:
 
 
 # ---------------------------------------------------------------------- campaigns
-def sample_campaign(t: Topology, rng: random.Random, cfg: GeneratorConfig) -> dict | None:
+def sample_campaign(t: Topology, rng: random.Random, cfg: GeneratorConfig,
+                    entry: str | None = None, target: str | None = None,
+                    vector: str | None = None) -> dict | None:
+    """Sample one campaign. ``entry`` / ``target`` pin the foothold and goal
+    (used for hand-written networks); otherwise both are drawn at random."""
     g = t.to_networkx()
-    entries = [(a, "phishing") for a in t.by_kind("workstation")]
-    entries += [(a, "public-web") for a in t.by_kind("web_server")]
+    if entry is not None:
+        a = t.assets[entry]
+        default_vector = "public-web" if a.kind == "web_server" else "phishing"
+        entries = [(a, vector or default_vector)]
+    else:
+        entries = [(a, "phishing") for a in t.by_kind("workstation")]
+        entries += [(a, "public-web") for a in t.by_kind("web_server")]
+        rng.shuffle(entries)
+    pinned_target = t.assets[target] if target is not None else None
     targets = [a for a in t.crown_jewels(0.85)]
-    rng.shuffle(entries)
-    for entry, vector in entries:
-        target = rng.choice(targets)
+    for entry, vector in entries:  # noqa: B020 - entry/vector now refer to the asset being tried
+        target = pinned_target if pinned_target is not None else rng.choice(targets)
         try:
             gen = nx.shortest_simple_paths(g, entry.id, target.id, weight="cost")
             cands = [p for p in islice(gen, cfg.candidate_paths) if len(p) - 1 <= cfg.max_hops]

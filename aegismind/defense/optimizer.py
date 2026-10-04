@@ -171,23 +171,37 @@ def business_weight(t: Topology) -> float:
     return sum(BUSINESS_WEIGHT.get(e.service, 1.0) for e in t.edges if e.allowed)
 
 
-def check_business_constraints(t: Topology, protected: set[str]) -> str | None:
-    """Return a reason string if a required business service is cut."""
+def business_violations(t: Topology, protected: set[str]) -> list[str]:
+    """Every required business service that is currently cut."""
     allowed = [e for e in t.edges if e.allowed]
     ws = {a.id for a in t.by_kind("workstation")}
+    out = []
     for app in t.by_kind("app_server"):
         if not any(e.dst == app.id and e.service == "http" and e.src in ws for e in allowed):
-            return f"cuts HTTP access from workstations to {app.id}"
+            out.append(f"cuts HTTP access from workstations to {app.id}")
     for db in t.by_kind("db_server"):
         if not any(e.dst == db.id and e.service == "sql" for e in allowed):
-            return f"cuts all SQL access to {db.id}"
+            out.append(f"cuts all SQL access to {db.id}")
     for dc in t.by_kind("domain_controller"):
         if not any(e.dst == dc.id and e.service == "ldap" for e in allowed):
-            return f"cuts LDAP (logins) to {dc.id}"
-    for p in protected:
+            out.append(f"cuts LDAP (logins) to {dc.id}")
+    for p in sorted(protected):
         if not any(p in (e.src, e.dst) for e in allowed):
-            return f"isolates protected asset {p}"
-    return None
+            out.append(f"isolates protected asset {p}")
+    return out
+
+
+def check_business_constraints(t: Topology, protected: set[str],
+                               baseline: Topology | None = None) -> str | None:
+    """Reason string for the first business rule the topology breaks, or None.
+
+    With ``baseline``, rules that were already broken there are ignored, so a
+    hand-written network that never offered a service is not held against
+    every action.
+    """
+    already = set(business_violations(baseline, protected)) if baseline is not None else set()
+    new = [v for v in business_violations(t, protected) if v not in already]
+    return new[0] if new else None
 
 
 def _perturb(t: Topology, rng: random.Random, noise: float) -> Topology:
@@ -245,7 +259,7 @@ def evaluate_action(t: Topology, a: DefenseAction, entry: str, jewels: list[str]
         samples.append((p0 - p1) / p0 if p0 > 0 else 0.0)
     unc = statistics.pstdev(samples) if len(samples) > 1 else 0.0
 
-    reason = check_business_constraints(t1, protected)
+    reason = check_business_constraints(t1, protected, baseline=t)
     if a.kind == "isolate_asset" and a.asset in protected:
         reason = f"{a.asset} is a protected asset"
     if changed == 0:
